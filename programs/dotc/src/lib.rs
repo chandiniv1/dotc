@@ -82,14 +82,12 @@ pub mod dotc {
 
         let clock = Clock::get()?;
 
-        // Validate conditions first (using immutable borrows)
         require!(ctx.accounts.deal_account.status == DealStatus::Active, ErrorCode::DealNotActive);
         require!(clock.unix_timestamp as u64 >= ctx.accounts.deal_account.conclusion_time, ErrorCode::ConclusionNotReady);
         require!(ctx.accounts.selected_bid.bid_id == selected_bid_id, ErrorCode::InvalidBidSelection);
         require!(ctx.accounts.selected_bid.deal_id == ctx.accounts.deal_account.deal_id, ErrorCode::InvalidBidSelection);
         require!(ctx.accounts.selected_bid.quantity <= ctx.accounts.deal_account.quantity, ErrorCode::ExceedsAvailableQuantity);
 
-        // Store values we need for transfers before taking mutable references
         let deal_id_bytes = ctx.accounts.deal_account.deal_id.to_le_bytes();
         let selected_quantity = ctx.accounts.selected_bid.quantity;
         let usdc_deposit = ctx.accounts.selected_bid.usdc_deposit;
@@ -104,7 +102,6 @@ pub mod dotc {
 
         let signer_seeds = &[&seeds[..]];
 
-        // Transfer sale tokens from escrow to buyer
         let transfer_sale_tokens = TransferChecked {
             from: ctx.accounts.deal_escrow_account.to_account_info(),
             to: ctx.accounts.buyer_sale_token_account.to_account_info(),
@@ -135,7 +132,6 @@ pub mod dotc {
 
         transfer_checked(buyer_token_cpi, usdc_deposit, output_token_decimals)?;
 
-        // Update deal state (now we can take mutable reference)
         let deal = &mut ctx.accounts.deal_account;
         deal.fulfilled_quantity = selected_quantity;
         deal.status = DealStatus::Fulfilled;
