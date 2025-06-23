@@ -1,7 +1,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::{
     associated_token::AssociatedToken,
-    token_interface::{Mint, TokenAccount, TokenInterface, TransferChecked, transfer_checked},
+    token_interface::{transfer_checked, Mint, TokenAccount, TokenInterface, TransferChecked},
 };
 
 declare_id!("4qoo54cDUhCeiAFyxTWBsMb9CjEuPbNAnLhZ4v8bCF63");
@@ -20,160 +20,6 @@ pub mod dotc {
     pub fn initialize_bid_counter(ctx: Context<InitializeBidCounter>) -> Result<()> {
         ctx.accounts.bid_counter.current_id = 1;
         Ok(())
-    }
-
-    pub fn conclude_deal(
-        ctx: Context<ConcludeDeal>,
-        selected_bid_id: u64,
-    ) -> Result<()> {
-        // let deal = &mut ctx.accounts.deal_account;
-        // let selected_bid = &mut ctx.accounts.selected_bid;
-        // let clock = Clock::get()?;
-
-        // require!(deal.status == DealStatus::Active, ErrorCode::DealNotActive);
-        // require!(clock.unix_timestamp as u64 >= deal.conclusion_time, ErrorCode::ConclusionNotReady);
-        // require!(selected_bid.bid_id == selected_bid_id, ErrorCode::InvalidBidSelection);
-        // require!(selected_bid.deal_id == deal.deal_id, ErrorCode::InvalidBidSelection);
-        // require!(selected_bid.quantity <= deal.quantity, ErrorCode::ExceedsAvailableQuantity);
-
-        // let deal_id_bytes = deal.deal_id.to_le_bytes();
-        // let seeds = &[
-        //     b"deal".as_ref(),
-        //     deal_id_bytes.as_ref(),
-        //     &[ctx.bumps.deal_account],
-        // ];
-
-        // let signer_seeds = &[&seeds[..]];
-
-        // let transfer_sale_tokens = TransferChecked {
-        //     from: ctx.accounts.deal_escrow_account.to_account_info(),
-        //     to: ctx.accounts.buyer_sale_token_account.to_account_info(),
-        //     mint: ctx.accounts.sale_token_mint.to_account_info(),
-        //     authority: ctx.accounts.deal_account.to_account_info(),
-        // };
-
-        // let sale_token_cpi = CpiContext::new_with_signer(
-        //     ctx.accounts.token_program.to_account_info(),
-        //     transfer_sale_tokens,
-        //     signer_seeds,
-        // );
-
-        // transfer_checked(sale_token_cpi, selected_bid.quantity, deal.sale_token.decimals)?;
-
-        // let transfer_buyer_tokens = TransferChecked {
-        //     from: ctx.accounts.buyer_tokens_account.to_account_info(),
-        //     to: ctx.accounts.seller_output_token_account.to_account_info(),
-        //     mint: ctx.accounts.output_token_mint.to_account_info(),
-        //     authority: ctx.accounts.buyer.to_account_info(),
-        // };
-
-        // let buyer_token_cpi = CpiContext::new(
-        //     ctx.accounts.token_program.to_account_info(),
-        //     transfer_buyer_tokens,
-        // );
-
-        // transfer_checked(buyer_token_cpi, selected_bid.usdc_deposit, deal.output_token.decimals)?;
-
-        // deal.fulfilled_quantity = selected_bid.quantity;
-        // // deal.selected_bid = Some(selected_bid_id);
-        // deal.status = DealStatus::Fulfilled;
-
-        // Ok(())
-
-        let clock = Clock::get()?;
-
-        require!(ctx.accounts.deal_account.status == DealStatus::Active, ErrorCode::DealNotActive);
-        require!(clock.unix_timestamp as u64 >= ctx.accounts.deal_account.conclusion_time, ErrorCode::ConclusionNotReady);
-        require!(ctx.accounts.selected_bid.bid_id == selected_bid_id, ErrorCode::InvalidBidSelection);
-        require!(ctx.accounts.selected_bid.deal_id == ctx.accounts.deal_account.deal_id, ErrorCode::InvalidBidSelection);
-        require!(ctx.accounts.selected_bid.quantity <= ctx.accounts.deal_account.quantity, ErrorCode::ExceedsAvailableQuantity);
-
-        let deal_id_bytes = ctx.accounts.deal_account.deal_id.to_le_bytes();
-        let selected_quantity = ctx.accounts.selected_bid.quantity;
-        let usdc_deposit = ctx.accounts.selected_bid.usdc_deposit;
-        let sale_token_decimals = ctx.accounts.deal_account.sale_token.decimals;
-        let output_token_decimals = ctx.accounts.deal_account.output_token.decimals;
-
-        let seeds = &[
-            b"deal".as_ref(),
-            deal_id_bytes.as_ref(),
-            &[ctx.bumps.deal_account],
-        ];
-
-        let signer_seeds = &[&seeds[..]];
-
-        let transfer_sale_tokens = TransferChecked {
-            from: ctx.accounts.deal_escrow_account.to_account_info(),
-            to: ctx.accounts.buyer_sale_token_account.to_account_info(),
-            mint: ctx.accounts.sale_token_mint.to_account_info(),
-            authority: ctx.accounts.deal_account.to_account_info(),
-        };
-
-        let sale_token_cpi = CpiContext::new_with_signer(
-            ctx.accounts.token_program.to_account_info(),
-            transfer_sale_tokens,
-            signer_seeds,
-        );
-
-        transfer_checked(sale_token_cpi, selected_quantity, sale_token_decimals)?;
-
-        // Transfer buyer tokens to seller
-        let transfer_buyer_tokens = TransferChecked {
-            from: ctx.accounts.buyer_tokens_account.to_account_info(),
-            to: ctx.accounts.seller_output_token_account.to_account_info(),
-            mint: ctx.accounts.output_token_mint.to_account_info(),
-            authority: ctx.accounts.buyer.to_account_info(),
-        };
-
-        let buyer_token_cpi = CpiContext::new(
-            ctx.accounts.token_program.to_account_info(),
-            transfer_buyer_tokens,
-        );
-
-        transfer_checked(buyer_token_cpi, usdc_deposit, output_token_decimals)?;
-
-        let deal = &mut ctx.accounts.deal_account;
-        deal.fulfilled_quantity = selected_quantity;
-        deal.status = DealStatus::Fulfilled;
-
-        Ok(())
-
-    }
-
-    pub fn submit_bid(
-        ctx: Context<SubmitBid>,
-        bid_price_per_unit: u64,
-        quantity: u64,
-    ) -> Result<()> {
-        let bid_counter = &mut ctx.accounts.bid_counter;
-
-        let deal = &mut ctx.accounts.deal_account;
-        let bid = &mut ctx.accounts.bid_account;
-        let clock = Clock::get()?;
-
-        let usdc_deposit = bid_price_per_unit.checked_mul(quantity).ok_or(ErrorCode::CalculationOverflow)?;
-
-        require!(
-            ctx.accounts.buyer_tokens_account.amount >= usdc_deposit,
-            ErrorCode::InsufficientBalance
-        );
-
-        bid.bid_id = bid_counter.current_id;
-        bid_counter.current_id += 1;
-        
-        bid.buyer = ctx.accounts.buyer.key();
-        bid.deal_id = deal.deal_id;
-
-        bid.bid_price_per_unit = bid_price_per_unit;
-        bid.quantity = quantity;
-        bid.usdc_deposit = usdc_deposit;
-
-        bid.timestamp = clock.unix_timestamp as u64;
-
-        deal.bids.push(bid.bid_id);
-
-        Ok(())
-
     }
 
     pub fn create_deal(
@@ -214,6 +60,7 @@ pub mod dotc {
         deal.status = DealStatus::Active;
         deal.fulfilled_quantity = 0;
         deal.bids = Vec::new();
+        deal.selected_bids = Vec::new();
 
         let transfer_accounts_options = TransferChecked {
             from: ctx.accounts.seller_tokens_account.to_account_info(),
@@ -222,14 +69,271 @@ pub mod dotc {
             authority: ctx.accounts.seller.to_account_info(),
         };
 
-        let cpi_context = CpiContext::new(ctx.accounts.token_program.to_account_info(), transfer_accounts_options);
+        let cpi_context = CpiContext::new(
+            ctx.accounts.token_program.to_account_info(),
+            transfer_accounts_options,
+        );
 
         transfer_checked(cpi_context, quantity, sale_token_decimals)?;
 
         Ok(())
     }
+
+    pub fn submit_bid(
+        ctx: Context<SubmitBid>,
+        bid_price_per_unit: u64,
+        quantity: u64,
+    ) -> Result<()> {
+        let bid_counter = &mut ctx.accounts.bid_counter;
+        let deal = &mut ctx.accounts.deal_account;
+        let bid_account = &mut ctx.accounts.bid_account;
+        let clock = Clock::get()?;
+
+        let usdc_deposit = bid_price_per_unit
+            .checked_mul(quantity)
+            .ok_or(ErrorCode::CalculationOverflow)?;
+
+        require!(
+            ctx.accounts.buyer_tokens_account.amount >= usdc_deposit,
+            ErrorCode::InsufficientBalance
+        );
+
+        require!(quantity > 0, ErrorCode::ZeroQuantity);
+
+        bid_account.bid_id = bid_counter.current_id;
+        bid_counter.current_id += 1;
+
+        bid_account.buyer = ctx.accounts.buyer.key();
+        bid_account.deal_id = deal.deal_id;
+        bid_account.bid_price_per_unit = bid_price_per_unit;
+        bid_account.quantity = quantity;
+        bid_account.usdc_deposit = usdc_deposit;
+        bid_account.timestamp = clock.unix_timestamp as u64;
+
+        deal.bids.push(bid_account.bid_id);
+
+        // Transfer USDC from buyer to bid escrow
+        transfer_checked(
+            CpiContext::new(
+                ctx.accounts.token_program.to_account_info(),
+                TransferChecked {
+                    from: ctx.accounts.buyer_tokens_account.to_account_info(),
+                    to: ctx.accounts.bid_escrow_account.to_account_info(),
+                    mint: ctx.accounts.output_tokens_mint.to_account_info(),
+                    authority: ctx.accounts.buyer.to_account_info(),
+                },
+            ),
+            usdc_deposit,
+            ctx.accounts.output_tokens_mint.decimals,
+        )?;
+
+        msg!(
+            "Bid submitted: {} tokens escrowed for bid {}",
+            usdc_deposit,
+            bid_account.bid_id
+        );
+
+        Ok(())
+    }
+
+    pub fn conclude_deal<'info>(
+        ctx: Context<'_, '_, '_, 'info, ConcludeDeal<'info>>,
+    ) -> Result<()> {
+        execute_deal_conclusion(ctx)
+    }
 }
 
+fn execute_deal_conclusion<'info>(
+    ctx: Context<'_, '_, '_, 'info, ConcludeDeal<'info>>,
+) -> Result<()> {
+    require!(
+        ctx.accounts.deal_account.status == DealStatus::Active,
+        ErrorCode::DealAlreadyFulfilled
+    );
+
+    let deal_id = ctx.accounts.deal_account.deal_id;
+    let deal_quantity = ctx.accounts.deal_account.quantity;
+    let sale_token_decimals = ctx.accounts.deal_account.sale_token.decimals;
+    let output_token_decimals = ctx.accounts.deal_account.output_token.decimals;
+
+    // Deal signer seeds
+    let deal_id_bytes = deal_id.to_le_bytes();
+    let deal_seeds = &[
+        b"deal".as_ref(),
+        deal_id_bytes.as_ref(),
+        &[ctx.bumps.deal_account],
+    ];
+    let deal_signer_seeds = &[&deal_seeds[..]];
+
+    let num_bids_with_accounts = ctx.remaining_accounts.len() / 4;
+    require!(num_bids_with_accounts > 0, ErrorCode::NoBidsAvailable);
+
+    let mut bid_data = Vec::with_capacity(num_bids_with_accounts);
+
+    for i in 0..num_bids_with_accounts {
+        let base_index = i * 4;
+
+        let bid_account_info = &ctx.remaining_accounts[base_index];
+        let buyer_sale_account_info = &ctx.remaining_accounts[base_index + 1];
+        let bid_escrow_account_info = &ctx.remaining_accounts[base_index + 2];
+        let buyer_output_account_info = &ctx.remaining_accounts[base_index + 3];
+
+        let bid_data_raw = bid_account_info
+            .try_borrow_data()
+            .map_err(|_| ErrorCode::BidAccountNotFound)?;
+
+        let bid = Bid::try_deserialize(&mut &bid_data_raw[..])
+            .map_err(|_| ErrorCode::BidAccountNotFound)?;
+
+        require!(bid.deal_id == deal_id, ErrorCode::InvalidBidForDeal);
+
+        // bid PDA and bump to avoid recomputation
+        let bid_id_bytes = bid.bid_id.to_le_bytes();
+        let (bid_pda, bid_bump) =
+            Pubkey::find_program_address(&[b"bid", bid_id_bytes.as_ref()], &ctx.program_id);
+
+        bid_data.push((
+            bid,
+            buyer_sale_account_info,
+            bid_escrow_account_info,
+            buyer_output_account_info,
+            bid_account_info,
+            bid_bump,
+            bid_id_bytes,
+        ));
+    }
+
+    let bids_for_optimization: Vec<Bid> = bid_data
+        .iter()
+        .map(|(bid, _, _, _, _, _, _)| bid.clone())
+        .collect();
+    let selection_result = optimize_bid_selection(&bids_for_optimization, deal_quantity)?;
+
+    ctx.accounts.deal_account.selected_bids =
+        selection_result.iter().map(|(bid, _)| bid.bid_id).collect();
+
+    for (
+        bid,
+        buyer_sale_account_info,
+        bid_escrow_account_info,
+        buyer_output_account_info,
+        bid_account_info,
+        bid_bump,
+        bid_id_bytes,
+    ) in bid_data.iter()
+    {
+        let bid_seeds = &[b"bid".as_ref(), bid_id_bytes.as_ref(), &[*bid_bump]];
+        let bid_signer_seeds = &[&bid_seeds[..]];
+
+        let allocated_quantity = selection_result
+            .iter()
+            .find(|(selected_bid, _)| selected_bid.bid_id == bid.bid_id)
+            .map(|(_, qty)| *qty)
+            .unwrap_or(0);
+
+        if allocated_quantity > 0 {
+            // Transfer sale tokens from deal escrow to buyer
+            transfer_checked(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    TransferChecked {
+                        from: ctx.accounts.deal_escrow_account.to_account_info(),
+                        to: buyer_sale_account_info.to_account_info(),
+                        mint: ctx.accounts.sale_tokens_mint.to_account_info(),
+                        authority: ctx.accounts.deal_account.to_account_info(),
+                    },
+                    deal_signer_seeds,
+                ),
+                allocated_quantity,
+                sale_token_decimals,
+            )?;
+
+            // Calculate and transfer payment from bid_escrow to seller
+            let payment_amount = allocated_quantity
+                .checked_mul(bid.bid_price_per_unit)
+                .ok_or(ErrorCode::CalculationOverflow)?;
+
+            transfer_checked(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    TransferChecked {
+                        from: bid_escrow_account_info.to_account_info(),
+                        to: ctx.accounts.seller_output_token_account.to_account_info(),
+                        mint: ctx.accounts.output_token_mint.to_account_info(),
+                        authority: bid_account_info.to_account_info(),
+                    },
+                    bid_signer_seeds,
+                ),
+                payment_amount,
+                output_token_decimals,
+            )?;
+
+            msg!(
+                "Executed bid {}: {} tokens for {} payment",
+                bid.bid_id,
+                allocated_quantity,
+                payment_amount
+            );
+        }
+
+        // Handle refunds for unselected or partially selected bids
+        let refund_quantity = bid.quantity.saturating_sub(allocated_quantity);
+        if refund_quantity > 0 {
+            let refund_amount = refund_quantity
+                .checked_mul(bid.bid_price_per_unit)
+                .ok_or(ErrorCode::CalculationOverflow)?;
+
+            transfer_checked(
+                CpiContext::new_with_signer(
+                    ctx.accounts.token_program.to_account_info(),
+                    TransferChecked {
+                        from: bid_escrow_account_info.to_account_info(),
+                        to: buyer_output_account_info.to_account_info(),
+                        mint: ctx.accounts.output_token_mint.to_account_info(),
+                        authority: bid_account_info.to_account_info(),
+                    },
+                    bid_signer_seeds,
+                ),
+                refund_amount,
+                output_token_decimals,
+            )?;
+
+            msg!(
+                "Refunded {} tokens for {} unallocated from bid {}",
+                refund_amount,
+                refund_quantity,
+                bid.bid_id
+            );
+        }
+    }
+
+    ctx.accounts.deal_account.status = DealStatus::Fulfilled;
+    Ok(())
+}
+
+pub fn optimize_bid_selection(bids: &[Bid], total_tokens: u64) -> Result<Vec<(Bid, u64)>> {
+    let mut sorted_bids = bids.to_vec();
+
+    // Sort by price descending (highest first)
+    sorted_bids.sort_unstable_by(|a, b| b.bid_price_per_unit.cmp(&a.bid_price_per_unit));
+
+    let mut selected_bids = Vec::new();
+    let mut remaining_tokens = total_tokens;
+
+    for bid in sorted_bids {
+        if remaining_tokens == 0 {
+            break;
+        }
+
+        let tokens_to_allocate = remaining_tokens.min(bid.quantity);
+        if tokens_to_allocate > 0 {
+            selected_bids.push((bid, tokens_to_allocate));
+            remaining_tokens -= tokens_to_allocate;
+        }
+    }
+
+    Ok(selected_bids)
+}
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, PartialEq, Eq, InitSpace)]
 pub enum DealStatus {
@@ -253,6 +357,8 @@ pub struct Deal {
     pub status: DealStatus,
     #[max_len(100)]
     pub bids: Vec<u64>,
+    #[max_len(100)]
+    pub selected_bids: Vec<u64>,
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, InitSpace)]
@@ -275,6 +381,18 @@ pub struct BidCounter {
     pub current_id: u64,
 }
 
+#[account]
+#[derive(InitSpace)]
+pub struct Bid {
+    pub bid_id: u64,
+    pub buyer: Pubkey,
+    pub deal_id: u64,
+    pub bid_price_per_unit: u64,
+    pub quantity: u64,
+    pub usdc_deposit: u64,
+    pub timestamp: u64,
+}
+
 impl Default for DealStatus {
     fn default() -> Self {
         DealStatus::Active
@@ -282,13 +400,6 @@ impl Default for DealStatus {
 }
 
 #[derive(Accounts)]
-#[instruction(
-    sale_token_symbol: String,
-    sale_token_decimals: u8,
-    output_token_symbol: String,
-    output_token_decimals: u8,
-    quantity: u64
-)]
 pub struct CreateDeal<'info> {
     #[account(mut)]
     pub seller: Signer<'info>,
@@ -352,7 +463,6 @@ pub struct InitializeDealCounter<'info> {
     pub system_program: Program<'info, System>,
 }
 
-
 #[derive(Accounts)]
 pub struct InitializeBidCounter<'info> {
     #[account(
@@ -368,20 +478,7 @@ pub struct InitializeBidCounter<'info> {
     pub system_program: Program<'info, System>,
 }
 
-#[account]
-#[derive(InitSpace)]
-pub struct Bid {
-    pub bid_id: u64,
-    pub buyer: Pubkey,
-    pub deal_id: u64,
-    pub bid_price_per_unit: u64,
-    pub quantity: u64,
-    pub usdc_deposit: u64,
-    pub timestamp: u64,
-}
-
 #[derive(Accounts)]
-#[instruction(bid_price_per_unit: u64, quantity: u64)]
 pub struct SubmitBid<'info> {
     #[account(mut)]
     pub buyer: Signer<'info>,
@@ -400,14 +497,25 @@ pub struct SubmitBid<'info> {
     )]
     pub bid_counter: Account<'info, BidCounter>,
 
-    pub buyer_tokens_mint: InterfaceAccount<'info, Mint>,
+    pub output_tokens_mint: InterfaceAccount<'info, Mint>,
+
+    pub sale_tokens_mint: InterfaceAccount<'info, Mint>,
 
     #[account(
-        associated_token::mint = buyer_tokens_mint,
+        mut,
+        associated_token::mint = output_tokens_mint,
         associated_token::authority = buyer,
         associated_token::token_program = token_program
     )]
     pub buyer_tokens_account: InterfaceAccount<'info, TokenAccount>,
+
+    #[account(
+        mut,
+        associated_token::mint = sale_tokens_mint,
+        associated_token::authority = buyer,
+        associated_token::token_program = token_program
+    )]
+    pub buyer_sale_token_account: InterfaceAccount<'info, TokenAccount>,
 
     #[account(
         init,
@@ -421,38 +529,42 @@ pub struct SubmitBid<'info> {
     )]
     pub bid_account: Account<'info, Bid>,
 
+    #[account(
+        init,
+        payer = buyer,
+        associated_token::mint = output_tokens_mint,
+        associated_token::authority = bid_account,
+        associated_token::token_program = token_program,
+    )]
+    pub bid_escrow_account: InterfaceAccount<'info, TokenAccount>,
+
     pub token_program: Interface<'info, TokenInterface>,
 
-    pub system_program: Program<'info, System>
+    pub system_program: Program<'info, System>,
+
+    pub associated_token_program: Program<'info, AssociatedToken>,
 }
 
 #[derive(Accounts)]
-#[instruction(selected_bid_id: u64)]
 pub struct ConcludeDeal<'info> {
     #[account(
         mut,
         seeds = [b"deal", deal_account.deal_id.to_le_bytes().as_ref()],
-        bump
+        bump,
+        constraint = deal_account.seller == seller.key() @ ErrorCode::UnauthorizedSeller
     )]
     pub deal_account: Account<'info, Deal>,
 
-    #[account(
-        mut,
-        seeds = [b"bid", selected_bid.bid_id.to_le_bytes().as_ref()],
-        bump
-    )]
-    pub selected_bid: Account<'info, Bid>,
-
     #[account(mut)]
-    pub buyer: Signer<'info>,
-
-    pub sale_token_mint: InterfaceAccount<'info, Mint>,
+    pub seller: Signer<'info>,
 
     pub output_token_mint: InterfaceAccount<'info, Mint>,
 
+    pub sale_tokens_mint: InterfaceAccount<'info, Mint>,
+
     #[account(
         mut,
-        associated_token::mint = sale_token_mint,
+        associated_token::mint = sale_tokens_mint,
         associated_token::authority = deal_account,
         associated_token::token_program = token_program
     )]
@@ -461,29 +573,14 @@ pub struct ConcludeDeal<'info> {
     #[account(
         mut,
         associated_token::mint = output_token_mint,
-        associated_token::authority = buyer,
-        associated_token::token_program = token_program
-    )]
-    pub buyer_tokens_account: InterfaceAccount<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        associated_token::mint = sale_token_mint,
-        associated_token::authority = buyer,
-        associated_token::token_program = token_program
-    )]
-    pub buyer_sale_token_account: InterfaceAccount<'info, TokenAccount>,
-
-    #[account(
-        mut,
-        associated_token::mint = output_token_mint,
-        associated_token::authority = deal_account.seller,
+        associated_token::authority = seller,
         associated_token::token_program = token_program
     )]
     pub seller_output_token_account: InterfaceAccount<'info, TokenAccount>,
 
     pub token_program: Interface<'info, TokenInterface>,
 
+    pub associated_token_program: Program<'info, AssociatedToken>,
 }
 
 #[error_code]
@@ -510,4 +607,26 @@ pub enum ErrorCode {
     DealNotExpired,
     #[msg("Exceeds available quantity")]
     ExceedsAvailableQuantity,
+    #[msg("No bids available")]
+    NoBidsAvailable,
+    #[msg("token account not found")]
+    BuyerTokenAccountNotFound,
+    #[msg("bid account not found")]
+    BidAccountNotFound,
+    #[msg("invalid bid for the deal")]
+    InvalidBidForDeal,
+    #[msg("bid escrow account not found")]
+    BidEscrowAccountNotFound,
+    #[msg("deal is still active")]
+    DealStillActive,
+    #[msg("bid was selected and cannot be refunded")]
+    BidWasSelected,
+    #[msg("Should not allow zero quantity bids")]
+    ZeroQuantity,
+    #[msg("Deal already fulfilled")]
+    DealAlreadyFulfilled,
+    #[msg("Deal expired")]
+    DealExpired,
+    #[msg("unauthorized seller")]
+    UnauthorizedSeller,
 }
