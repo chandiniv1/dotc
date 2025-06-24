@@ -143,6 +143,7 @@ pub mod dotc {
     }
 }
 
+
 fn execute_deal_conclusion<'info>(
     ctx: Context<'_, '_, '_, 'info, ConcludeDeal<'info>>,
 ) -> Result<()> {
@@ -153,8 +154,6 @@ fn execute_deal_conclusion<'info>(
 
     let deal_id = ctx.accounts.deal_account.deal_id;
     let deal_quantity = ctx.accounts.deal_account.quantity;
-    let sale_token_decimals = ctx.accounts.deal_account.sale_token.decimals;
-    let output_token_decimals = ctx.accounts.deal_account.output_token.decimals;
 
     // Deal signer seeds
     let deal_id_bytes = deal_id.to_le_bytes();
@@ -170,6 +169,7 @@ fn execute_deal_conclusion<'info>(
 
     let mut bid_data = Vec::with_capacity(num_bids_with_accounts);
 
+    // Collect and validate bid data
     for i in 0..num_bids_with_accounts {
         let base_index = i * 4;
 
@@ -187,7 +187,7 @@ fn execute_deal_conclusion<'info>(
 
         require!(bid.deal_id == deal_id, ErrorCode::InvalidBidForDeal);
 
-        // bid PDA and bump to avoid recomputation
+        // bid PDA and bump
         let bid_id_bytes = bid.bid_id.to_le_bytes();
         let (bid_pda, bid_bump) =
             Pubkey::find_program_address(&[b"bid", bid_id_bytes.as_ref()], &ctx.program_id);
@@ -203,6 +203,7 @@ fn execute_deal_conclusion<'info>(
         ));
     }
 
+    // bid selection
     let bids_for_optimization: Vec<Bid> = bid_data
         .iter()
         .map(|(bid, _, _, _, _, _, _)| bid.clone())
@@ -212,6 +213,7 @@ fn execute_deal_conclusion<'info>(
     ctx.accounts.deal_account.selected_bids =
         selection_result.iter().map(|(bid, _)| bid.bid_id).collect();
 
+    // Process each bid - execute transfers and refunds
     for (
         bid,
         buyer_sale_account_info,
@@ -222,88 +224,38 @@ fn execute_deal_conclusion<'info>(
         bid_id_bytes,
     ) in bid_data.iter()
     {
-        let bid_seeds = &[b"bid".as_ref(), bid_id_bytes.as_ref(), &[*bid_bump]];
-        let bid_signer_seeds = &[&bid_seeds[..]];
-
         let allocated_quantity = selection_result
             .iter()
             .find(|(selected_bid, _)| selected_bid.bid_id == bid.bid_id)
             .map(|(_, qty)| *qty)
             .unwrap_or(0);
 
+        // Execute transfers for selected bids
         if allocated_quantity > 0 {
-            // Transfer sale tokens from deal escrow to buyer
-            transfer_checked(
-                CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    TransferChecked {
-                        from: ctx.accounts.deal_escrow_account.to_account_info(),
-                        to: buyer_sale_account_info.to_account_info(),
-                        mint: ctx.accounts.sale_tokens_mint.to_account_info(),
-                        authority: ctx.accounts.deal_account.to_account_info(),
-                    },
-                    deal_signer_seeds,
-                ),
+            execute_bid_transfer(
+                &ctx,
+                bid,
+                buyer_sale_account_info,
+                bid_escrow_account_info,
+                bid_account_info,
                 allocated_quantity,
-                sale_token_decimals,
+                deal_signer_seeds,
+                &[b"bid".as_ref(), bid_id_bytes.as_ref(), &[*bid_bump]],
             )?;
-
-            // Calculate and transfer payment from bid_escrow to seller
-            let payment_amount = allocated_quantity
-                .checked_mul(bid.bid_price_per_unit)
-                .ok_or(ErrorCode::CalculationOverflow)?;
-
-            transfer_checked(
-                CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    TransferChecked {
-                        from: bid_escrow_account_info.to_account_info(),
-                        to: ctx.accounts.seller_output_token_account.to_account_info(),
-                        mint: ctx.accounts.output_token_mint.to_account_info(),
-                        authority: bid_account_info.to_account_info(),
-                    },
-                    bid_signer_seeds,
-                ),
-                payment_amount,
-                output_token_decimals,
-            )?;
-
-            msg!(
-                "Executed bid {}: {} tokens for {} payment",
-                bid.bid_id,
-                allocated_quantity,
-                payment_amount
-            );
         }
 
-        // Handle refunds for unselected or partially selected bids
+        // refunds for unselected or partially selected bids
         let refund_quantity = bid.quantity.saturating_sub(allocated_quantity);
         if refund_quantity > 0 {
-            let refund_amount = refund_quantity
-                .checked_mul(bid.bid_price_per_unit)
-                .ok_or(ErrorCode::CalculationOverflow)?;
-
-            transfer_checked(
-                CpiContext::new_with_signer(
-                    ctx.accounts.token_program.to_account_info(),
-                    TransferChecked {
-                        from: bid_escrow_account_info.to_account_info(),
-                        to: buyer_output_account_info.to_account_info(),
-                        mint: ctx.accounts.output_token_mint.to_account_info(),
-                        authority: bid_account_info.to_account_info(),
-                    },
-                    bid_signer_seeds,
-                ),
-                refund_amount,
-                output_token_decimals,
-            )?;
-
-            msg!(
-                "Refunded {} tokens for {} unallocated from bid {}",
-                refund_amount,
+            execute_bid_refund(
+                &ctx,
+                bid,
+                bid_escrow_account_info,
+                buyer_output_account_info,
+                bid_account_info,
                 refund_quantity,
-                bid.bid_id
-            );
+                &[b"bid".as_ref(), bid_id_bytes.as_ref(), &[*bid_bump]],
+            )?;
         }
     }
 
@@ -311,10 +263,114 @@ fn execute_deal_conclusion<'info>(
     Ok(())
 }
 
+/// Executes transfers
+fn execute_bid_transfer<'info>(
+    ctx: &Context<'_, '_, '_, 'info, ConcludeDeal<'info>>,
+    bid: &Bid,
+    buyer_sale_account_info: &AccountInfo<'info>,
+    bid_escrow_account_info: &AccountInfo<'info>,
+    bid_account_info: &AccountInfo<'info>,
+    allocated_quantity: u64,
+    deal_signer_seeds: &[&[&[u8]]],
+    bid_signer_seeds: &[&[u8]],
+) -> Result<()> {
+    let sale_token_decimals = ctx.accounts.deal_account.sale_token.decimals;
+    let output_token_decimals = ctx.accounts.deal_account.output_token.decimals;
+
+    // Transfer sale tokens from deal escrow to buyer
+    transfer_checked(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: ctx.accounts.deal_escrow_account.to_account_info(),
+                to: buyer_sale_account_info.to_account_info(),
+                mint: ctx.accounts.sale_tokens_mint.to_account_info(),
+                authority: ctx.accounts.deal_account.to_account_info(),
+            },
+            deal_signer_seeds,
+        ),
+        allocated_quantity,
+        sale_token_decimals,
+    )?;
+
+    // Calculate and transfer payment from bid_escrow to seller
+    let payment_amount = allocated_quantity
+        .checked_mul(bid.bid_price_per_unit)
+        .ok_or(ErrorCode::CalculationOverflow)?;
+
+    let bid_signer_seeds_slice = &[&bid_signer_seeds[..]];
+
+    transfer_checked(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: bid_escrow_account_info.to_account_info(),
+                to: ctx.accounts.seller_output_token_account.to_account_info(),
+                mint: ctx.accounts.output_token_mint.to_account_info(),
+                authority: bid_account_info.to_account_info(),
+            },
+            bid_signer_seeds_slice,
+        ),
+        payment_amount,
+        output_token_decimals,
+    )?;
+
+    msg!(
+        "Executed bid {}: {} tokens for {} payment",
+        bid.bid_id,
+        allocated_quantity,
+        payment_amount
+    );
+
+    Ok(())
+}
+
+/// refund of unallocated tokens back to the bidder
+fn execute_bid_refund<'info>(
+    ctx: &Context<'_, '_, '_, 'info, ConcludeDeal<'info>>,
+    bid: &Bid,
+    bid_escrow_account_info: &AccountInfo<'info>,
+    buyer_output_account_info: &AccountInfo<'info>,
+    bid_account_info: &AccountInfo<'info>,
+    refund_quantity: u64,
+    bid_signer_seeds: &[&[u8]],
+) -> Result<()> {
+    let output_token_decimals = ctx.accounts.deal_account.output_token.decimals;
+
+    let refund_amount = refund_quantity
+        .checked_mul(bid.bid_price_per_unit)
+        .ok_or(ErrorCode::CalculationOverflow)?;
+
+    let bid_signer_seeds_slice = &[&bid_signer_seeds[..]];
+
+    transfer_checked(
+        CpiContext::new_with_signer(
+            ctx.accounts.token_program.to_account_info(),
+            TransferChecked {
+                from: bid_escrow_account_info.to_account_info(),
+                to: buyer_output_account_info.to_account_info(),
+                mint: ctx.accounts.output_token_mint.to_account_info(),
+                authority: bid_account_info.to_account_info(),
+            },
+            bid_signer_seeds_slice,
+        ),
+        refund_amount,
+        output_token_decimals,
+    )?;
+
+    msg!(
+        "Refunded {} tokens for {} unallocated from bid {}",
+        refund_amount,
+        refund_quantity,
+        bid.bid_id
+    );
+
+    Ok(())
+}
+
 pub fn optimize_bid_selection(bids: &[Bid], total_tokens: u64) -> Result<Vec<(Bid, u64)>> {
     let mut sorted_bids = bids.to_vec();
 
-    // Sort by price descending (highest first)
     sorted_bids.sort_unstable_by(|a, b| b.bid_price_per_unit.cmp(&a.bid_price_per_unit));
 
     let mut selected_bids = Vec::new();
