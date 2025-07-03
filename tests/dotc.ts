@@ -20,6 +20,7 @@ import {
 } from '@solana/web3.js';
 import { assert } from 'chai';
 import type { Dotc } from '../target/types/dotc';
+import { AnchorError } from '@coral-xyz/anchor';
 
 describe('dotc', () => {
   const provider = anchor.AnchorProvider.env();
@@ -1076,25 +1077,30 @@ describe('dotc', () => {
           .rpc();
 
         assert.fail('Should have failed with invalid bid for deal');
-      } catch (error) {
-        const errorStr = error.toString().toLowerCase();
-        const errorMsg = error.message?.toLowerCase() || '';
+      } catch (error: unknown) {
+        const errorStr =
+          error instanceof Error
+            ? error.toString().toLowerCase()
+            : String(error).toLowerCase();
+        const errorMsg =
+          error instanceof Error ? error.message?.toLowerCase() || '' : '';
+
+        const errorCode =
+          error instanceof AnchorError ? error.error?.errorCode?.code : '';
 
         if (
           errorStr.includes('invalidbidfordeal') ||
           errorMsg.includes('invalidbidfordeal') ||
           errorStr.includes('invalid bid') ||
           errorMsg.includes('invalid bid') ||
-          error.error?.errorCode?.code === 'InvalidBidForDeal'
+          errorCode === 'InvalidBidForDeal'
         ) {
           console.log('✅ Invalid bid for deal error case passed');
         } else {
-          console.log(
-            'Expected InvalidBidForDeal error, but got:',
-            error.error?.errorCode?.code
-          );
+          console.log('Expected InvalidBidForDeal error, but got:', errorCode);
+          console.log('Full error:', error);
           assert.fail(
-            `Expected InvalidBidForDeal error, but got: ${error.error?.errorCode?.code}`
+            `Expected InvalidBidForDeal error, but got: ${errorCode}`
           );
         }
       }
